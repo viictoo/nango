@@ -414,9 +414,9 @@ program
             diagnostics
         });
         if (resDryRun.isErr()) {
-            process.exit(NANGO_CLI_DRYRUN_ERROR_EXIT_CODE);
+            process.exitCode = NANGO_CLI_DRYRUN_ERROR_EXIT_CODE;
+            return;
         }
-        process.exit(0);
     });
 
 program
@@ -461,7 +461,8 @@ program
             if (err instanceof MissingArgumentError) {
                 this.help();
             }
-            process.exit(1);
+            process.exitCode = NANGO_CLI_DEPLOY_ERROR_EXIT_CODE;
+            return;
         }
 
         const precheck = await verificationService.ensureZeroYaml({ fullPath, debug });
