@@ -414,9 +414,9 @@ program
             diagnostics
         });
         if (resDryRun.isErr()) {
-            process.exitCode = NANGO_CLI_DRYRUN_ERROR_EXIT_CODE;
-            return;
+            process.exit(NANGO_CLI_DRYRUN_ERROR_EXIT_CODE);
         }
+        process.exit(0);
     });
 
 program
