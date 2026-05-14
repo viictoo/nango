@@ -13,6 +13,7 @@ import {
     connectionService,
     errorManager,
     getProxyConfiguration,
+    pubsub,
     refreshOrTestCredentials
 } from '@nangohq/shared';
 import { getHeaders, getLogger, metrics, redactHeaders, zodErrorToHTTP } from '@nangohq/utils';
@@ -21,7 +22,6 @@ import { isBaseUrlOverrideDenied, normalizeDenylist } from './baseUrlOverrideDen
 import { envs } from '../../env.js';
 import { connectionIdSchema, providerConfigKeySchema } from '../../helpers/validation.js';
 import { connectionRefreshFailed, connectionRefreshSuccess } from '../../hooks/hooks.js';
-import { pubsub } from '../../pubsub.js';
 import { asyncWrapper } from '../../utils/asyncWrapper.js';
 import { capping } from '../../utils/usage.js';
 import { featureFlags } from '../../utils/utils.js';
@@ -57,6 +57,14 @@ const schemaHeaders = z.object({
     'nango-is-sync': z.enum(['true', 'false']).optional(),
     'nango-is-dry-run': z.enum(['true', 'false']).optional()
 });
+
+// Headers from provider responses that Nango needs to explicitly forwards to the client.
+const PROXY_RESPONSE_HEADER_ALLOWLIST = [
+    'content-type',
+    'mcp-session-id', // MCP RFC — https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management
+    'x-request-id',
+    'x-correlation-id'
+];
 
 export const allPublicProxy = asyncWrapper<AllPublicProxy>(async (req, res, next) => {
     const valHeaders = schemaHeaders.safeParse(req.headers);
@@ -347,7 +355,6 @@ export function parseHeaders(req: Pick<Request, 'rawHeaders'>) {
 }
 
 export async function handleResponse({ res, responseStream, logCtx }: { res: Response; responseStream: AxiosResponse; logCtx: LogContext }) {
-    const contentType = responseStream.headers['content-type'] || '';
     const contentDisposition = responseStream.headers['content-disposition'] || '';
     const transferEncoding = responseStream.headers['transfer-encoding'] || '';
     const contentEncoding = responseStream.headers['content-encoding'] || '';
@@ -387,8 +394,11 @@ export async function handleResponse({ res, responseStream, logCtx }: { res: Res
             return;
         }
 
-        if (typeof contentType === 'string' && contentType !== '') {
-            res.setHeader('Content-Type', contentType);
+        for (const header of PROXY_RESPONSE_HEADER_ALLOWLIST) {
+            const value = responseStream.headers[header];
+            if (typeof value === 'string' && value !== '') {
+                res.setHeader(header, value);
+            }
         }
 
         try {
@@ -492,7 +502,10 @@ export function handleErrorResponse({
         errorStream.on('end', () => {
             const data = chunks.length > 0 ? Buffer.concat(chunks).toString() : '';
             let parsedBody: string | Record<string, string> = data;
-            if (error.response?.headers?.['content-type']?.includes('application/json')) {
+            const contentTypeHeader = error.response?.headers?.['content-type'];
+            const contentType =
+                typeof contentTypeHeader === 'string' ? contentTypeHeader : Array.isArray(contentTypeHeader) ? contentTypeHeader.join(', ') : '';
+            if (contentType.includes('application/json')) {
                 try {
                     parsedBody = JSON.parse(data);
                 } catch {
